@@ -61,26 +61,45 @@
 			patterns = options ? options : {};
 			patternFollow = patterns.follow ? patterns.follow : /$/,
 			patternId = patterns.id ? patterns.id : /[0-9]+/,
-			patternSpace = patterns.space ? pattern.space : /[ \t\n\r]+/,
+			patternSpace = patterns.space ? patterns.space : /[ \t\n\r]+/,
+			patternStartParen = patterns.startParen ? patterns.startParen : /\(/,
+			patternEndParen = patterns.endParen ? patterns.endParen : /\)/,
 			MIN_PRED = 1,
 			MAX_PRED = 65535,
-			END_PRED = 0,
+			END_PRED = -1,
+			PAREN_PRED1 = 0,
+			PAREN_PRED2 = 65537,
 			ID_PRED = 65536,
 			PRED_SCALE = 10,
 			PRED_DIFF = 2,
 			END = 0,
 			ID = 1,
-			operatorNo = 2,
+			START_PAREN = 2,
+			END_PAREN = 3,
+			INFIX = 1,
+			PREFIX = 2,
+			POSTFIX = 3,
+			operatorNo = 4,
 			trie = Trie(),
-			tableF = {},
-			tableG = {},
-			actions = {};
-		tableF[END] = END_PRED * PRED_SCALE;
-		tableG[END] = END_PRED * PRED_SCALE;
-		actions[END] = function(attr) { return attr; };
-		tableF[ID] = ID_PRED * PRED_SCALE;
-		tableG[ID] = ID_PRED * PRED_SCALE + PRED_DIFF;
-		actions[ID] = patterns.actionId ? patterns.actionId : function(x) { return parseFloat(x); };
+			table = {};
+		table[END] = {
+			f: END_PRED * PRED_SCALE,
+			g: END_PRED * PRED_SCALE,
+			action: function(attr) { return attr; }
+		};
+		table[ID] = {
+			f: ID_PRED * PRED_SCALE,
+			g: ID_PRED * PRED_SCALE + PRED_DIFF,
+			action: patterns.actionId ? patterns.actionId : function(x) { return parseFloat(x); }
+		};
+		table[START_PAREN] = {
+			f: PAREN_PRED1 * PRED_SCALE,
+			g: PAREN_PRED2 * PRED_SCALE
+		};
+		table[END_PAREN] = {
+			f: PAREN_PRED2 * PRED_SCALE,
+			g: PAREN_PRED1 * PRED_SCALE
+		};
 		function copyRegex(pattern) {
 			var reSource = pattern.source;
 				reFlags = "g";
@@ -100,18 +119,22 @@
 				return null;
 			}
 		}
-		function addOperator(operator, precedenceF, precedenceG, action) {
+		function addOperator(operator, precedenceF, precedenceG, action, fix) {
 			trie.add(operator, operatorNo);
-			tableF[operatorNo] = precedenceF;
-			tableG[operatorNo] = precedenceG;
-			actions[operatorNo] = action;
-			operatorNo++;
+			table[operatorNo++] = {
+				f: precedenceF,
+				g: precedenceG,
+				action: action,
+				fix: fix
+			};
 		}
 		function parse(str, index) {
 			var nowIndex = index ? index : 0,
 				pFollow = copyRegex(patternFollow),
 				pId = copyRegex(patternId),
 				pSpace = copyRegex(patternSpace),
+				pStartParen = copyRegex(patternStartParen),
+				pEndParen = copyRegex(patternEndParen),
 				stack = [],
 				attrStack = [],
 				token,
@@ -122,16 +145,19 @@
 				if(!!(match = matchSticky(pSpace, str, nowIndex))) {
 					nowIndex = match.index;
 				}
-				if(nowIndex >= str.length) {
+				if(nowIndex >= str.length || !!matchSticky(pFollow, str, nowIndex)) {
 					return {
-						token: END,
-						attr: null
+						token: END
 					};
-				} else if(!!(match = matchSticky(pFollow, str, nowIndex))) {
+				} else if(!!(match = matchSticky(pStartParen, str, nowIndex))) {
 					nowIndex = match.index;
 					return {
-						token: END,
-						attr: null
+						token: START_PAREN
+					};
+				} else if(!!(match = matchSticky(pEndParen, str, nowIndex))) {
+					nowIndex = match.index;
+					return {
+						token: END_PAREN
 					};
 				} else if(!!(match = matchSticky(pId, str, nowIndex))) {
 					nowIndex = match.index;
@@ -142,8 +168,7 @@
 				} else if(!!(match = trie.search(str, nowIndex))) {
 					nowIndex += match.key.length;
 					return {
-						token: match.value,
-						attr: null
+						token: match.value
 					};
 				} else {
 					throw new Error("Syntax error: unexpected token");
@@ -153,11 +178,22 @@
 				var arg1,
 					arg2;
 				if(token.token === ID) {
-					attrStack.push(actions[ID](token.attr));
-				} else if(token.token !== END) {
-					arg2 = attrStack.pop();
-					arg1 = attrStack.pop();
-					attrStack.push(actions[token.token](arg1, arg2));
+					attrStack.push(table[ID].action(token.attr));
+				} else if(token.token !== END && token.token !== START_PAREN && token.token !== END_PAREN) {
+					switch(table[token.token].fix) {
+					case INFIX:
+						arg2 = attrStack.pop();
+						arg1 = attrStack.pop();
+						attrStack.push(table[token.token].action(arg1, arg2));
+						break;
+					case PREFIX:
+					case POSTFIX:
+						arg1 = attrStack.pop();
+						attrStack.push(table[token.token].action(arg1, arg2));
+						break;
+					default:
+						throw new Error("Invalid fix");
+					}
 				}
 			}
 			stack.push({ token: END });
@@ -170,24 +206,30 @@
 						attribute: attrStack[attrStack.length - 1]
 					};
 				} else {
-					if(tableF[stack[stack.length - 1].token] <= tableG[token.token]) {
+					if(table[stack[stack.length - 1].token].f <= table[token.token].g) {
 						stack.push(token);
 						token = nextToken();
 					} else {
 						do {
 							tokenPoped = stack.pop();
 							doAction(tokenPoped);
-						} while(tableF[stack[stack.length - 1].token] >= tableG[tokenPoped.token]);
+						} while(table[stack[stack.length - 1].token].f >= table[tokenPoped.token].g);
 					}
 				}
 			}
 		}
 		me = {
-			addOperatorLToR: function(operator, precedence, action) {
-				addOperator(operator, precedence * PRED_SCALE, precedence * PRED_SCALE - PRED_DIFF, action);
+			addInfixOperatorLToR: function(operator, precedence, action) {
+				addOperator(operator, precedence * PRED_SCALE, precedence * PRED_SCALE - PRED_DIFF, action, INFIX);
 			},
-			addOperatorRToL: function(operator, precedence, action) {
-				addOperator(operator, precedence * PRED_SCALE, precedence * PRED_SCALE + PRED_DIFF, action);
+			addInfixOperatorRToL: function(operator, precedence, action) {
+				addOperator(operator, precedence * PRED_SCALE, precedence * PRED_SCALE + PRED_DIFF, action, INFIX);
+			},
+			addPrefixOperator: function(operator, precedence, action) {
+				addOperator(operator, precedence * PRED_SCALE, precedence * PRED_SCALE + PRED_DIFF, action, PREFIX);
+			},
+			addPostfixOperator: function(operator, precedence, action) {
+				addOperator(operator, precedence * PRED_SCALE, precedence * PRED_SCALE - PRED_DIFF, action, PREFIX);
 			},
 			parse: parse
 		};
