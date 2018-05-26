@@ -48,9 +48,12 @@
 					return null;
 				}
 			},
-			add: function(keyword, value) {
+			add: function(keyword, value, propname) {
 				addTrie(keyword, value);
-				keyValue[keyword] = value;
+				if(!keyValue[keyword]) {
+					keyValue[keyword] = {};
+				}
+				keyValue[keyword][propname] = value;
 			}
 		};
 		return me;
@@ -120,7 +123,7 @@
 			}
 		}
 		function addOperator(operator, precedenceF, precedenceG, action, fix) {
-			trie.add(operator, operatorNo);
+			trie.add(operator, operatorNo, fix);
 			table[operatorNo++] = {
 				f: precedenceF,
 				g: precedenceG,
@@ -138,41 +141,119 @@
 				stack = [],
 				attrStack = [],
 				token,
-				tokenPoped;
+				tokenPoped,
+				fixState = PREFIX;
+			function transitFix(fix, token) {
+				switch(fix) {
+				case PREFIX:
+					if(token === ID) {
+						return {
+							state: INFIX
+						};
+					} else if(token === START_PAREN) {
+						return {
+							state: PREFIX
+						};
+					} else if(token === END_PAREN) {
+						throw new Error("Syntax error: unexpected end parenthesis");
+					} else if(token === END) {
+						throw new Error("Syntax error: unexpected end of expression");
+					} else if(table[token[PREFIX]]) {
+						return {
+							state: PREFIX,
+							fix: PREFIX
+						};
+					} else {
+						throw new Error("Syntax error: unexpected postfix operator");
+					}
+				case INFIX:
+					if(token === ID || token === START_PAREN) {
+						throw new Error("Syntax error: unexpected id or start parenthesis");
+					} else if(token === END_PAREN || token === END) {
+						return {
+							state: INFIX
+						};
+					} else if(table[token[INFIX]]) {
+						return {
+							state: POSTFIX,
+							fix: INFIX
+						};
+					} else if(table[token[POSTFIX]]) {
+						return {
+							state: POSTFIX,
+							fix: POSTFIX
+						};
+					} else {
+						throw new Error("Syntax error: unexpected prefix operator");
+					}
+				case POSTFIX:
+					if(token === ID || token === START_PAREN || token === END_PAREN || token === END) {
+						return {
+							state: INFIX
+						};
+					} else if(table[token[PREFIX]]) {
+						return {
+							state: PREFIX,
+							fix: PREFIX
+						};
+					} else if(table[token[POSTFIX]]) {
+						return {
+							state: POSTFIX,
+							fix: POSTFIX
+						};
+					} else {
+						return {
+							state: INFIX,
+							fix: INFIX
+						};
+					}
+				default:
+					throw new Error("invalid state");
+				}
+			}
 			function nextToken() {
 				var match,
-					attr;
+					attr,
+					result,
+					fixResult;
 				if(!!(match = matchSticky(pSpace, str, nowIndex))) {
 					nowIndex = match.index;
 				}
 				if(nowIndex >= str.length || !!matchSticky(pFollow, str, nowIndex)) {
-					return {
+					result = {
 						token: END
 					};
 				} else if(!!(match = matchSticky(pStartParen, str, nowIndex))) {
 					nowIndex = match.index;
-					return {
+					result = {
 						token: START_PAREN
 					};
 				} else if(!!(match = matchSticky(pEndParen, str, nowIndex))) {
 					nowIndex = match.index;
-					return {
+					result = {
 						token: END_PAREN
 					};
 				} else if(!!(match = matchSticky(pId, str, nowIndex))) {
 					nowIndex = match.index;
-					return {
+					result = {
 						token: ID,
 						attr: match.match
 					};
 				} else if(!!(match = trie.search(str, nowIndex))) {
 					nowIndex += match.key.length;
-					return {
-						token: match.value
+					result = {
+						token: match.value,
+						operator: true
 					};
 				} else {
 					throw new Error("Syntax error: unexpected token");
 				}
+				fixResult = transitFix(fixState, result.token);
+				fixState = fixResult.state;
+				if(result.operator) {
+					result.token = result.token[fixResult.fix];
+				}
+				return result;
 			}
 			function doAction(token) {
 				var arg1,
@@ -229,7 +310,7 @@
 				addOperator(operator, precedence * PRED_SCALE, precedence * PRED_SCALE + PRED_DIFF, action, PREFIX);
 			},
 			addPostfixOperator: function(operator, precedence, action) {
-				addOperator(operator, precedence * PRED_SCALE, precedence * PRED_SCALE - PRED_DIFF, action, PREFIX);
+				addOperator(operator, precedence * PRED_SCALE, precedence * PRED_SCALE - PRED_DIFF, action, POSTFIX);
 			},
 			parse: parse
 		};
