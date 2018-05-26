@@ -83,25 +83,29 @@
 			PREFIX = 2,
 			POSTFIX = 3,
 			operatorNo = 4,
-			trie = Trie(),
-			table = {};
+			trie = Trie(),   // not immutable
+			table = {};      // not immutable
 		table[END] = {
 			f: END_PRED * PRED_SCALE,
 			g: END_PRED * PRED_SCALE,
-			action: function(attr) { return attr; }
+			action: function(attr) { return attr; },
+			associative: true
 		};
 		table[ID] = {
 			f: ID_PRED * PRED_SCALE,
 			g: ID_PRED * PRED_SCALE + PRED_DIFF,
-			action: patterns.actionId ? patterns.actionId : function(x) { return parseFloat(x); }
+			action: patterns.actionId ? patterns.actionId : function(x) { return parseFloat(x); },
+			associative: true
 		};
 		table[START_PAREN] = {
 			f: PAREN_PRED1 * PRED_SCALE,
-			g: PAREN_PRED2 * PRED_SCALE
+			g: PAREN_PRED2 * PRED_SCALE,
+			associative: true
 		};
 		table[END_PAREN] = {
 			f: PAREN_PRED2 * PRED_SCALE,
-			g: PAREN_PRED1 * PRED_SCALE
+			g: PAREN_PRED1 * PRED_SCALE,
+			associative: true
 		};
 		function copyRegex(pattern) {
 			var reSource = pattern.source;
@@ -122,13 +126,17 @@
 				return null;
 			}
 		}
-		function addOperator(operator, precedenceF, precedenceG, action, fix) {
+		function isSamePrecedence(predF, predG) {
+			return Math.abs(predF - predG) <= PRED_SCALE;
+		}
+		function addOperator(operator, precedenceF, precedenceG, action, fix, nonassoc) {
 			trie.add(operator, operatorNo, fix);
 			table[operatorNo++] = {
 				f: precedenceF,
 				g: precedenceG,
 				action: action,
-				fix: fix
+				fix: fix,
+				associative: !nonassoc
 			};
 		}
 		function parse(str, index) {
@@ -140,9 +148,8 @@
 				pEndParen = copyRegex(patternEndParen),
 				stack = [],
 				attrStack = [],
-				token,
-				tokenPoped,
-				fixState = PREFIX;
+				fixState = PREFIX,
+				countParen = 0;
 			function transitFix(fix, token) {
 				switch(fix) {
 				case PREFIX:
@@ -187,9 +194,13 @@
 						throw new Error("Syntax error: unexpected prefix operator");
 					}
 				case POSTFIX:
-					if(token === ID || token === START_PAREN || token === END_PAREN || token === END) {
+					if(token === ID || token === END_PAREN || token === END) {
 						return {
 							state: INFIX
+						};
+					} else if(token === START_PAREN) {
+						return {
+							state: PREFIX
 						};
 					} else if(table[token[PREFIX]]) {
 						return {
@@ -220,16 +231,24 @@
 					nowIndex = match.index;
 				}
 				if(nowIndex >= str.length || !!matchSticky(pFollow, str, nowIndex)) {
+					if(countParen > 0) {
+						throw new Error("Syntax error: unbalanced parenthesis");
+					}
 					result = {
 						token: END
 					};
 				} else if(!!(match = matchSticky(pStartParen, str, nowIndex))) {
 					nowIndex = match.index;
+					countParen++;
 					result = {
 						token: START_PAREN
 					};
 				} else if(!!(match = matchSticky(pEndParen, str, nowIndex))) {
 					nowIndex = match.index;
+					countParen--;
+					if(countParen < 0) {
+						throw new Error("Syntax error: unbalanced parenthesis");
+					}
 					result = {
 						token: END_PAREN
 					};
@@ -253,6 +272,7 @@
 				if(result.operator) {
 					result.token = result.token[fixResult.fix];
 				}
+				result.associative = table[result.token].associative;
 				return result;
 			}
 			function doAction(token) {
@@ -277,40 +297,63 @@
 					}
 				}
 			}
-			stack.push({ token: END });
-			token = nextToken();
-			while(true) {
-				if(stack[stack.length - 1].token === END && token.token === END) {
-					return {
-						match: str.substr(index, nowIndex),
-						lastIndex: nowIndex,
-						attribute: attrStack[attrStack.length - 1]
-					};
-				} else {
-					if(table[stack[stack.length - 1].token].f <= table[token.token].g) {
-						stack.push(token);
-						token = nextToken();
+			function exec() {
+				var token,
+					tokenPoped,
+					stackTop,
+					isSamePred;
+				stack.push({ token: END });
+				token = nextToken();
+				while(true) {
+					stackTop = stack[stack.length - 1].token;
+					if(stackTop === END && token.token === END) {
+						return {
+							match: str.substr(index, nowIndex),
+							lastIndex: nowIndex,
+							attribute: attrStack[attrStack.length - 1]
+						};
 					} else {
-						do {
-							tokenPoped = stack.pop();
-							doAction(tokenPoped);
-						} while(table[stack[stack.length - 1].token].f >= table[tokenPoped.token].g);
+						// check associative
+						isSamePred = isSamePrecedence(table[stackTop].f, table[token.token].g);
+						if(isSamePred && !token.associative) {
+							throw new Error("Syntax error: operator is not associative");
+						}
+
+						if(table[stackTop].f <= table[token.token].g) {
+							stack.push(token);
+							token = nextToken();
+						} else {
+							do {
+								tokenPoped = stack.pop();
+								doAction(tokenPoped);
+							} while(table[stack[stack.length - 1].token].f >= table[tokenPoped.token].g);
+						}
 					}
 				}
 			}
+			return exec();
 		}
 		me = {
-			addInfixOperatorLToR: function(operator, precedence, action) {
+			addInfixLToR: function(operator, precedence, action) {
 				addOperator(operator, precedence * PRED_SCALE, precedence * PRED_SCALE - PRED_DIFF, action, INFIX);
 			},
-			addInfixOperatorRToL: function(operator, precedence, action) {
+			addInfixRToL: function(operator, precedence, action) {
 				addOperator(operator, precedence * PRED_SCALE, precedence * PRED_SCALE + PRED_DIFF, action, INFIX);
 			},
-			addPrefixOperator: function(operator, precedence, action) {
+			addInfixNonAssoc: function(operator, precedence, action) {
+				addOperator(operator, precedence * PRED_SCALE, precedence * PRED_SCALE + PRED_DIFF, action, INFIX, true);
+			},
+			addPrefix: function(operator, precedence, action) {
 				addOperator(operator, precedence * PRED_SCALE, precedence * PRED_SCALE + PRED_DIFF, action, PREFIX);
 			},
-			addPostfixOperator: function(operator, precedence, action) {
+			addPrefixNonAssoc: function(operator, precedence, action) {
+				addOperator(operator, precedence * PRED_SCALE, precedence * PRED_SCALE + PRED_DIFF, action, PREFIX, true);
+			},
+			addPostfix: function(operator, precedence, action) {
 				addOperator(operator, precedence * PRED_SCALE, precedence * PRED_SCALE - PRED_DIFF, action, POSTFIX);
+			},
+			addPostfixNonAssoc: function(operator, precedence, action) {
+				addOperator(operator, precedence * PRED_SCALE, precedence * PRED_SCALE - PRED_DIFF, action, POSTFIX, true);
 			},
 			parse: parse
 		};
