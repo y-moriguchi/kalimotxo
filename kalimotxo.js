@@ -65,8 +65,8 @@
 			patternFollow = patterns.follow ? patterns.follow : /$/,
 			patternId = patterns.id ? patterns.id : /[0-9]+/,
 			patternSpace = patterns.space ? patterns.space : /[ \t\n\r]+/,
-			patternStartParen = patterns.startParen ? patterns.startParen : /\(/,
-			patternEndParen = patterns.endParen ? patterns.endParen : /\)/,
+			patternStartParen = patterns.parenthesis ? patterns.parenthesis[0] : /\(/,
+			patternEndParen = patterns.parenthesis ? patterns.parenthesis[1] : /\)/,
 			MIN_PRED = 1,
 			MAX_PRED = 65535,
 			END_PRED = -1,
@@ -126,8 +126,10 @@
 				return null;
 			}
 		}
-		function isSamePrecedence(predF, predG) {
-			return Math.abs(predF - predG) <= PRED_SCALE;
+		function isSamePrecedence(token1, token2) {
+			var pred1 = table[token1],
+				pred2 = table[token2];
+			return pred1.fix === pred2.fix && Math.abs(pred1.f - pred2.g) <= PRED_SCALE;
 		}
 		function addOperator(operator, precedenceF, precedenceG, action, fix, nonassoc) {
 			trie.add(operator, operatorNo, fix);
@@ -214,7 +216,7 @@
 						};
 					} else {
 						return {
-							state: INFIX,
+							state: PREFIX,
 							fix: INFIX
 						};
 					}
@@ -222,7 +224,7 @@
 					throw new Error("invalid state");
 				}
 			}
-			function nextToken() {
+			function nextToken(before) {
 				var match,
 					attr,
 					result,
@@ -271,6 +273,9 @@
 				fixState = fixResult.state;
 				if(result.operator) {
 					result.token = result.token[fixResult.fix];
+					if(before && table[before.token].fix === INFIX && fixResult.fix === INFIX) {
+						throw new Error("Syntax error: unexpected infix operator");
+					}
 				}
 				result.associative = table[result.token].associative;
 				return result;
@@ -303,7 +308,7 @@
 					stackTop,
 					isSamePred;
 				stack.push({ token: END });
-				token = nextToken();
+				token = nextToken(token);
 				while(true) {
 					stackTop = stack[stack.length - 1].token;
 					if(stackTop === END && token.token === END) {
@@ -314,14 +319,15 @@
 						};
 					} else {
 						// check associative
-						isSamePred = isSamePrecedence(table[stackTop].f, table[token.token].g);
+						isSamePred = isSamePrecedence(stackTop, token.token);
 						if(isSamePred && !token.associative) {
 							throw new Error("Syntax error: operator is not associative");
 						}
 
-						if(table[stackTop].f <= table[token.token].g) {
+						if(!(table[stackTop].fix === POSTFIX && (table[token.token].fix === POSTFIX || table[token.token].fix === INFIX)) &&
+								(table[stackTop].f <= table[token.token].g || table[token.token].fix === PREFIX)) {
 							stack.push(token);
-							token = nextToken();
+							token = nextToken(token);
 						} else {
 							do {
 								tokenPoped = stack.pop();
