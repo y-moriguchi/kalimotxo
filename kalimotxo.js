@@ -7,7 +7,7 @@
  * http://opensource.org/licenses/mit-license.php
  **/
 (function(root) {
-	function Trie() {
+	function Trie(wordPattern) {
 		var me,
 			trie = {},
 			keyValue = {},
@@ -29,17 +29,19 @@
 				var nowTrie = trie,
 					i,
 					ch,
+					word = true,
 					res = "";
 				for(i = index; i < str.length; i++) {
 					ch = str.charAt(i);
 					if(nowTrie[ch]) {
 						nowTrie = nowTrie[ch];
+						word = word && wordPattern.test(ch);
 						res += ch;
 					} else {
 						break;
 					}
 				}
-				if(keyValue[res]) {
+				if(keyValue[res] && (!word || !wordPattern.test(ch))) {
 					return {
 						key: res,
 						value: keyValue[res]
@@ -83,7 +85,7 @@
 			PREFIX = 2,
 			POSTFIX = 3,
 			operatorNo = 4,
-			trie = Trie(),   // not immutable
+			trie = Trie(patterns.words ? patterns.words : /[a-zA-Z_]/),   // not immutable
 			table = {};      // not immutable
 		table[END] = {
 			f: END_PRED * PRED_SCALE,
@@ -126,6 +128,19 @@
 				return null;
 			}
 		}
+		function makeMatcher(pattern) {
+			var regex;
+			if(typeof pattern === "function") {
+				return pattern;
+			} else if(pattern instanceof RegExp) {
+				regex = copyRegex(pattern);
+				return function(str, index) {
+					return matchSticky(regex, str, index);
+				};
+			} else {
+				throw new Error("invalid pattern");
+			}
+		}
 		function isSamePrecedence(token1, token2) {
 			var pred1 = table[token1],
 				pred2 = table[token2];
@@ -144,7 +159,7 @@
 		function parse(str, index) {
 			var nowIndex = index ? index : 0,
 				pFollow = copyRegex(patternFollow),
-				pId = copyRegex(patternId),
+				pId = makeMatcher(patternId),
 				pSpace = copyRegex(patternSpace),
 				pStartParen = copyRegex(patternStartParen),
 				pEndParen = copyRegex(patternEndParen),
@@ -232,7 +247,19 @@
 				if(!!(match = matchSticky(pSpace, str, nowIndex))) {
 					nowIndex = match.index;
 				}
-				if(nowIndex >= str.length || !!matchSticky(pFollow, str, nowIndex)) {
+				if(!!(match = pId(str, nowIndex))) {
+					nowIndex = match.index;
+					result = {
+						token: ID,
+						attr: match.match
+					};
+				} else if(!!(match = trie.search(str, nowIndex))) {
+					nowIndex += match.key.length;
+					result = {
+						token: match.value,
+						operator: true
+					};
+				} else if(nowIndex >= str.length || !!matchSticky(pFollow, str, nowIndex)) {
 					if(countParen > 0) {
 						throw new Error("Syntax error: unbalanced parenthesis");
 					}
@@ -253,18 +280,6 @@
 					}
 					result = {
 						token: END_PAREN
-					};
-				} else if(!!(match = matchSticky(pId, str, nowIndex))) {
-					nowIndex = match.index;
-					result = {
-						token: ID,
-						attr: match.match
-					};
-				} else if(!!(match = trie.search(str, nowIndex))) {
-					nowIndex += match.key.length;
-					result = {
-						token: match.value,
-						operator: true
 					};
 				} else {
 					throw new Error("Syntax error: unexpected token");

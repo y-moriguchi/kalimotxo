@@ -48,6 +48,7 @@ describe("Kalimotxo", function () {
 		rules.addPostfix("!@", 1200 - 520, x => fact(x));
 		rules.addPrefix("/", 1200 - 400, x => 1 / x);
 		rules.addPrefixNonAssoc("-", 1200 - 500, x => -x);
+		rules.addPrefixNonAssoc("uminus", 1200 - 500, x => -x);
 		rules.addPrefix("-@", 1200 - 500, x => x - 5);
 		return rules;
 	}
@@ -166,6 +167,17 @@ describe("Kalimotxo", function () {
 		it("option: actionId", function () {
 			var rules = makeRules({ actionId: function(x) { return x.length } });
 			match(rules, "(1+2)*346", 6);
+		});
+		it("word boundary", function () {
+			var rules = makeRules();
+			match(rules, "uminus1", -1);
+			match(rules, "uminus 1", -1);
+			toThrow(rules, "uminuss1");
+		});
+		it("option: words", function () {
+			var rules = makeRules({ words: /[a-zA-Z0-9_]/ });
+			match(rules, "uminus 1", -1);
+			toThrow(rules, "uminus1", -1);
 		});
 	});
 });
