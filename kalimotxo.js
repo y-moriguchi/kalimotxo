@@ -122,7 +122,8 @@
 			if(!!(match = regex.exec(str.substr(index))) && match.index === 0) {
 				return {
 					match: match[0],
-					index: index + regex.lastIndex
+					lastIndex: index + regex.lastIndex,
+					attribute: match[0]
 				}
 			} else {
 				return null;
@@ -156,9 +157,9 @@
 				associative: !nonassoc
 			};
 		}
-		function parse(str, index) {
+		function parse(str, index, follow) {
 			var nowIndex = index ? index : 0,
-				pFollow = copyRegex(patternFollow),
+				pFollow = copyRegex(follow ? follow : patternFollow),
 				pId = makeMatcher(patternId),
 				pSpace = copyRegex(patternSpace),
 				pStartParen = copyRegex(patternStartParen),
@@ -245,13 +246,20 @@
 					result,
 					fixResult;
 				if(!!(match = matchSticky(pSpace, str, nowIndex))) {
-					nowIndex = match.index;
+					nowIndex = match.lastIndex;
 				}
-				if(!!(match = pId(str, nowIndex))) {
-					nowIndex = match.index;
+				if(nowIndex >= str.length || !!matchSticky(pFollow, str, nowIndex)) {
+					if(countParen > 0) {
+						throw new Error("Syntax error: unbalanced parenthesis");
+					}
+					result = {
+						token: END
+					};
+				} else if(!!(match = pId(str, nowIndex))) {
+					nowIndex = match.lastIndex;
 					result = {
 						token: ID,
-						attr: match.match
+						attr: match.attribute
 					};
 				} else if(!!(match = trie.search(str, nowIndex))) {
 					nowIndex += match.key.length;
@@ -259,21 +267,14 @@
 						token: match.value,
 						operator: true
 					};
-				} else if(nowIndex >= str.length || !!matchSticky(pFollow, str, nowIndex)) {
-					if(countParen > 0) {
-						throw new Error("Syntax error: unbalanced parenthesis");
-					}
-					result = {
-						token: END
-					};
 				} else if(!!(match = matchSticky(pStartParen, str, nowIndex))) {
-					nowIndex = match.index;
+					nowIndex = match.lastIndex;
 					countParen++;
 					result = {
 						token: START_PAREN
 					};
 				} else if(!!(match = matchSticky(pEndParen, str, nowIndex))) {
-					nowIndex = match.index;
+					nowIndex = match.lastIndex;
 					countParen--;
 					if(countParen < 0) {
 						throw new Error("Syntax error: unbalanced parenthesis");

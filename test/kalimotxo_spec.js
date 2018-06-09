@@ -18,10 +18,10 @@ describe("Kalimotxo", function () {
 		return r;
 	}
 
-	function match(rules, str, value, length) {
+	function match(rules, str, value, length, follow) {
 		var len = length === void 0 ? str.length : length,
 			result;
-		result = rules.parse(str, 0);
+		result = rules.parse(str, 0, follow);
 		expect(result.lastIndex).toBe(len);
 		expect(result.attribute).toEqual(value);
 	}
@@ -178,6 +178,11 @@ describe("Kalimotxo", function () {
 			var rules = makeRules({ words: /[a-zA-Z0-9_]/ });
 			match(rules, "uminus 1", -1);
 			toThrow(rules, "uminus1", -1);
+		});
+		it("follow", function () {
+			var rules = makeRules();
+			match(rules, "1+2+3;", 6, 5, /;/);
+			match(rules, "1+2+3;", 1, 1, /\+/);
 		});
 	});
 });
