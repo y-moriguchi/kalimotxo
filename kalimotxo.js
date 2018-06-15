@@ -65,6 +65,7 @@
 		var me,
 			patterns = options ? options : {};
 			patternFollow = patterns.follow ? patterns.follow : /$/,
+			patternPreId = patterns.preId,
 			patternId = patterns.id ? patterns.id : /[0-9]+/,
 			patternSpace = patterns.space ? patterns.space : /[ \t\n\r]+/,
 			patternStartParen = patterns.parenthesis ? patterns.parenthesis[0] : /\(/,
@@ -154,12 +155,14 @@
 				g: precedenceG,
 				action: action,
 				fix: fix,
-				associative: !nonassoc
+				associative: !nonassoc,
+				operator: operator
 			};
 		}
 		function parse(str, index, follow) {
 			var nowIndex = index ? index : 0,
 				pFollow = copyRegex(follow ? follow : patternFollow),
+				pPreId = patternPreId ? makeMatcher(patternPreId) : null,
 				pId = makeMatcher(patternId),
 				pSpace = copyRegex(patternSpace),
 				pStartParen = copyRegex(patternStartParen),
@@ -168,7 +171,9 @@
 				attrStack = [],
 				fixState = PREFIX,
 				countParen = 0;
-			function transitFix(fix, token) {
+			function transitFix(fix, token, before) {
+				var completeOperator,
+					operatorToken;
 				switch(fix) {
 				case PREFIX:
 					if(token === ID) {
@@ -180,8 +185,32 @@
 							state: PREFIX
 						};
 					} else if(token === END_PAREN) {
+						if(table[before.token].fix === PREFIX) {
+							stack.pop();
+						}
+						if(patterns.unexpectedOperator) {
+							return {
+								state: INFIX,
+								recover: {
+									token: ID,
+									attr: patterns.unexpectedOperator(table[before.token].operator)
+								}
+							};
+						}
 						throw new Error("Syntax error: unexpected end parenthesis");
 					} else if(token === END) {
+						if(table[before.token].fix === PREFIX) {
+							stack.pop();
+						}
+						if(patterns.unexpectedOperator) {
+							return {
+								state: INFIX,
+								recover: {
+									token: ID,
+									attr: patterns.unexpectedOperator(table[before.token].operator)
+								}
+							};
+						}
 						throw new Error("Syntax error: unexpected end of expression");
 					} else if(table[token[PREFIX]]) {
 						return {
@@ -189,7 +218,17 @@
 							fix: PREFIX
 						};
 					} else {
-						throw new Error("Syntax error: unexpected postfix operator");
+						operatorToken = token[INFIX] ? token[INFIX] : token[POSTFIX];
+						if(patterns.unexpectedOperator) {
+							return {
+								state: INFIX,
+								recover: {
+									token: ID,
+									attr: patterns.unexpectedOperator(table[operatorToken].operator)
+								}
+							};
+						}
+						throw new Error("Syntax error: unexpected infix/postfix operator");
 					}
 				case INFIX:
 					if(token === ID || token === START_PAREN) {
@@ -248,14 +287,18 @@
 				if(!!(match = matchSticky(pSpace, str, nowIndex))) {
 					nowIndex = match.lastIndex;
 				}
-				if(nowIndex >= str.length || !!matchSticky(pFollow, str, nowIndex)) {
+				if(nowIndex >= str.length) {
 					if(countParen > 0) {
 						throw new Error("Syntax error: unbalanced parenthesis");
 					}
 					result = {
 						token: END
 					};
-				} else if(!!(match = pId(str, nowIndex))) {
+				} else if(countParen === 0 && !!matchSticky(pFollow, str, nowIndex)) {
+					result = {
+						token: END
+					};
+				} else if(pPreId !== null && !!(match = pPreId(str, nowIndex))) {
 					nowIndex = match.lastIndex;
 					result = {
 						token: ID,
@@ -266,6 +309,12 @@
 					result = {
 						token: match.value,
 						operator: true
+					};
+				} else if(!!(match = pId(str, nowIndex))) {
+					nowIndex = match.lastIndex;
+					result = {
+						token: ID,
+						attr: match.attribute
 					};
 				} else if(!!(match = matchSticky(pStartParen, str, nowIndex))) {
 					nowIndex = match.lastIndex;
@@ -285,12 +334,23 @@
 				} else {
 					throw new Error("Syntax error: unexpected token");
 				}
-				fixResult = transitFix(fixState, result.token);
+				fixResult = transitFix(fixState, result.token, before);
 				fixState = fixResult.state;
-				if(result.operator) {
-					result.token = result.token[fixResult.fix];
-					if(before && table[before.token].fix === INFIX && fixResult.fix === INFIX) {
-						throw new Error("Syntax error: unexpected infix operator");
+				if(fixResult.recover) {
+					result = fixResult.recover;
+				} else {
+					if(result.operator) {
+						result.token = result.token[fixResult.fix];
+						if(before && table[before.token].fix === INFIX && fixResult.fix === INFIX) {
+							if(patterns.unexpectedOperator) {
+								fixState = INFIX;
+								return {
+									token: ID,
+									attr: patterns.unexpectedOperator(table[result.token].operator)
+								};
+							}
+							throw new Error("Syntax error: unexpected infix operator");
+						}
 					}
 				}
 				result.associative = table[result.token].associative;
@@ -382,12 +442,12 @@
 		return me;
 	}
 
-	module = {
+	kalimotxoModule = {
 		Operator: Operator
 	};
 	if(typeof module !== "undefined" && module.exports) {
-		module.exports = module;
+		module.exports = kalimotxoModule;
 	} else {
-		root["Kalimotxo"] = root["K"] = module;
+		root["Kalimotxo"] = root["K"] = kalimotxoModule;
 	}
 })(this);

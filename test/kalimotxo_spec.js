@@ -183,6 +183,31 @@ describe("Kalimotxo", function () {
 			var rules = makeRules();
 			match(rules, "1+2+3;", 6, 5, /;/);
 			match(rules, "1+2+3;", 1, 1, /\+/);
+			match(rules, "(1+2)+3;", 3, 5, /\+/);
+		});
+		it("id precedence", function () {
+			var rules = makeRules({ id: /[a-z]+/, actionId: function(x) { return x.length; } });
+			match(rules, "id+id", 4);
+			match(rules, "uminus id", -2);
+		});
+		it("option: preid", function () {
+			var rules = makeRules({ preId: /----/, actionId: function(x) { return x.length; } });
+			match(rules, "----+----", 8);
+		});
+		it("option: unexpected operator", function () {
+			var rules = makeRules({ unexpectedOperator: function(x) { return x.length; } });
+			match(rules, "+", 1);
+			match(rules, "-@", 2);
+			match(rules, "!", 1);
+			match(rules, "(+)", 1);
+			match(rules, "(-@)", 2);
+			match(rules, "(!)", 1);
+			match(rules, "+ + 2", 3);
+			match(rules, "2 + *", 3);
+			match(rules, "+ + +", 2);
+			match(rules, "(+ + +)", 2);
+			match(rules, "+!", 1);
+			match(rules, "-@-@", -3);
 		});
 	});
 });
