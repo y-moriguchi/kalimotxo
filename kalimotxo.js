@@ -63,7 +63,7 @@
 
 	function Operator(options) {
 		var me,
-			patterns = options ? options : {};
+			patterns = options ? options : {},
 			patternFollow = patterns.follow ? patterns.follow : /$/,
 			patternPreId = patterns.preId,
 			patternId = patterns.id ? patterns.id : /[0-9]+/,
@@ -185,7 +185,7 @@
 							state: PREFIX
 						};
 					} else if(token === END_PAREN) {
-						if(table[before.token].fix === PREFIX) {
+						if(before && before.token && table[before.token].fix === PREFIX) {
 							stack.pop();
 						}
 						if(patterns.unexpectedOperator) {
@@ -199,7 +199,7 @@
 						}
 						throw new Error("Syntax error: unexpected end parenthesis");
 					} else if(token === END) {
-						if(table[before.token].fix === PREFIX) {
+						if(before && before.token && table[before.token].fix === PREFIX) {
 							stack.pop();
 						}
 						if(patterns.unexpectedOperator) {
@@ -310,12 +310,6 @@
 						token: match.value,
 						operator: true
 					};
-				} else if(!!(match = pId(str, nowIndex))) {
-					nowIndex = match.lastIndex;
-					result = {
-						token: ID,
-						attr: match.attribute
-					};
 				} else if(!!(match = matchSticky(pStartParen, str, nowIndex))) {
 					nowIndex = match.lastIndex;
 					countParen++;
@@ -330,6 +324,12 @@
 					}
 					result = {
 						token: END_PAREN
+					};
+				} else if(!!(match = pId(str, nowIndex))) {
+					nowIndex = match.lastIndex;
+					result = {
+						token: ID,
+						attr: match.attribute
 					};
 				} else {
 					throw new Error("Syntax error: unexpected token");
